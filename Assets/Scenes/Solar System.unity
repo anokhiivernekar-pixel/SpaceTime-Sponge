@@ -938,8 +938,8 @@ Camera:
   m_GameObject: {fileID: 298158969}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 1
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_ClearFlags: 2
+  m_BackGroundColor: {r: 0.08627451, g: 0.08235294, b: 0.08627451, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -947,7 +947,7 @@ Camera:
   m_ShutterSpeed: 0.005
   m_Aperture: 16
   m_FocusDistance: 10
-  m_FocalLength: 50
+  m_FocalLength: 21.648573
   m_BladeCount: 5
   m_Curvature: {x: 2, y: 11}
   m_BarrelClipping: 0.25
@@ -962,7 +962,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 1000
-  field of view: 60
+  field of view: 58
   orthographic: 0
   orthographic size: 5
   m_Depth: 0
@@ -988,13 +988,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 298158969}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.47419485, y: -0.12673448, z: -0.02305449, w: -0.8709456}
-  m_LocalPosition: {x: -0.19000053, y: 7.76, z: -6.4100003}
+  m_LocalRotation: {x: 0.76604444, y: 0, z: 0, w: 0.64278764}
+  m_LocalPosition: {x: 0, y: 10, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: -304.9, y: 25.091, z: 16.276}
+  m_LocalEulerAnglesHint: {x: 100, y: 0, z: 0}
 --- !u!45 &298158974
 Skybox:
   m_ObjectHideFlags: 0
@@ -1003,7 +1003,7 @@ Skybox:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 298158969}
   m_Enabled: 1
-  m_CustomSkybox: {fileID: 2100000, guid: 16b3443a26b839c4186dde8ac606ceba, type: 2}
+  m_CustomSkybox: {fileID: 0}
 --- !u!114 &298158975
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1019,10 +1019,16 @@ MonoBehaviour:
   rotateSpeed: 3
   panSpeed: 0.5
   zoomSpeed: 10
+  penPanSpeed: 0.04
+  penRotateSpeed: 0.2
+  minimumPenPressure: 0.001
+  allowTouchscreen: 1
+  touchPanSpeed: 0.04
   moveSpeed: 120
   fastMultiplier: 3
   positionSmoothness: 20
   rotationSmoothness: 20
+  showInputDebug: 0
 --- !u!114 &298158976
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1729,35 +1735,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dfb0b8329e92b794f8f72d429d923bc4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpacetimeLattice
-  gridSize: 10
-  spacing: 2
-  layers: 10
-  layerHeight: 2
-  autoFitToBodies: 1
-  fitPadding: 1.5
-  gridCurveExponent: 1.25
-  gravitationalConstant: 6.6743e-11
-  curvatureMultiplier: 4e-19
-  minDistance: 1
-  gravityBodies:
-  - {fileID: 1029413364}
-  - {fileID: 1541853826}
-  - {fileID: 381660156}
-  - {fileID: 1066632336}
-  - {fileID: 1195647987}
-  - {fileID: 1606359906}
-  - {fileID: 109555179}
-  - {fileID: 910262987}
-  - {fileID: 934511114}
-  - {fileID: 282666784}
+  horizontalCells: 20
+  verticalCells: 4
+  cellSize: 1.5
   lineMaterial: {fileID: 2100000, guid: c19a1f618615d204383c732074085d71, type: 2}
+  lineColor: {r: 0.55, g: 0.15, b: 1, a: 1}
   lineWidth: 0.005
-  colorByCurvature: 1
-  flatColor: {r: 1, g: 0, b: 1, a: 1}
-  warpedColor: {r: 0.627451, g: 0.1254902, b: 0.9411765, a: 1}
-  colorFalloffPower: 0.4
-  runMassTestOnStart: 0
-  testDistance: 5
+  gravityRange: 15
+  curvatureStrength: 3.5
+  massVisualExponent: 0.1
+  softeningDistance: 2.5
+  minimumRangeFraction: 0.35
+  automaticallyFindBodies: 1
+  bodySearchInterval: 1
 --- !u!4 &818960250
 Transform:
   m_ObjectHideFlags: 0
@@ -4610,6 +4600,14 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 3831531268958745930, guid: 3cc3195d1eb24004e8afce3421a5b747, type: 3}
+      propertyPath: m_CastShadows
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3831531268958745930, guid: 3cc3195d1eb24004e8afce3421a5b747, type: 3}
+      propertyPath: m_DynamicOccludee
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 3831531268958745930, guid: 3cc3195d1eb24004e8afce3421a5b747, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 

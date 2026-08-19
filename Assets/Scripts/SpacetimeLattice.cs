@@ -1,494 +1,1052 @@
-using UnityEngine;
 using System.Collections.Generic;
-
+using UnityEngine;
 
 public class SpacetimeLattice : MonoBehaviour
 {
+    // =========================================================
+    // LATTICE SIZE
+    // =========================================================
 
-    [Header("Grid")]
-    public int gridSize = 20;
-    public float spacing = 2f;
-    public int layers = 20;
-    public float layerHeight = 2f;
+    [Header("LATTICE SIZE")]
 
+    [Tooltip("Number of cubes across the X and Z directions.")]
+    [Range(4, 100)]
+    public int horizontalCells = 20;
 
-    [Header("Auto Fit")]
-    [Tooltip("If enabled, the grid is scaled at runtime so the cube always encloses the farthest gravity body, instead of using the fixed spacing/layerHeight above.")]
-    public bool autoFitToBodies = true;
+    [Tooltip("Number of cubes vertically. Lower this to make the lattice shorter.")]
+    [Range(2, 100)]
+    public int verticalCells = 8;
 
-    [Tooltip("Multiplier on the farthest body's distance. 1 = cube edge touches it exactly, 1.2 = 20% breathing room.")]
-    public float fitPadding = 1.2f;
-
-    [Tooltip("1 = evenly spaced grid lines. Higher values bunch grid lines up near the center (where the inner planets are) and spread them out toward the edges (where only the outer planets are). Without this, a grid stretched out to Pluto has almost no resolution left near Mercury/Venus/Earth and their warps become invisible.")]
-    public float gridCurveExponent = 2.5f;
-
-    // Half the total world-space extent of the cube along XZ and Y. Replaces
-    // spacing/layerHeight as the actual driver of point placement once
-    // gridCurveExponent != 1 — spacing/layerHeight above are only used as a
-    // fallback when autoFitToBodies is off.
-    float halfExtentXZ;
-    float halfExtentY;
+    [Tooltip("Size of every individual cube. Keep this the same if you want the cubes to stay the same size.")]
+    public float cellSize = 3f;
 
 
-    [Header("Gravity")]
-    public float gravitationalConstant = 6.6743e-11f;
-    public float curvatureMultiplier = 5e-19f;
+    // =========================================================
+    // LINE APPEARANCE
+    // =========================================================
 
-    [Tooltip("Prevents the well from spiking to a sharp point right next to a body. Increase for a gentler dip.")]
-    public float minDistance = 1f;
+    [Header("LINE APPEARANCE")]
 
-
-    [Header("Bodies")]
-    public List<CelestialMass> gravityBodies;
-
-
-    [Header("Line")]
     public Material lineMaterial;
-    public float lineWidth = 0.02f;
+
+    public Color lineColor =
+        new Color(0.55f, 0.15f, 1f, 1f);
+
+    [Range(0.001f, 0.1f)]
+    public float lineWidth = 0.006f;
 
 
-    [Header("Curvature Color")]
-    [Tooltip("Requires a shader that reads vertex colors, e.g. 'Sprites/Default' or an Unlit shader with a Vertex Color node.")]
-    public bool colorByCurvature = true;
-    public Color flatColor = new Color(0.1f, 0.3f, 1f);   // blue, far from any mass
-    public Color warpedColor = new Color(0.3f, 1f, 0.5f); // green, close to a mass
+    // =========================================================
+    // GRAVITY / CURVATURE
+    // =========================================================
 
-    [Tooltip("Lower = the green pocket stays tighter around each body. Higher = the color bleeds further out.")]
-    public float colorFalloffPower = 0.4f;
+    [Header("GRAVITY / CURVATURE")]
 
-    // Each body's strongest curvature value found anywhere on the grid,
-    // used to normalize that body's own color independently of the others.
-    // Without this, the Sun's curvature would dwarf every planet's and
-    // only the Sun would ever show green.
-    float[] perBodyMaxCurvature;
+    [Tooltip("Maximum distance around a body where the lattice can curve.")]
+    public float gravityRange = 15f;
+
+    [Tooltip("Overall strength of the curvature.")]
+    public float curvatureStrength = 4f;
+
+    [Tooltip(
+        "Controls how visible smaller planets are compared with the Sun. " +
+        "Lower values make planets more noticeable."
+    )]
+    [Range(0.05f, 1f)]
+    public float massVisualExponent = 0.10f;
+
+    [Tooltip("Prevents very sharp spikes near the center of objects.")]
+    public float softeningDistance = 2.5f;
+
+    [Tooltip("Minimum gravity range given to smaller bodies.")]
+    [Range(0.05f, 1f)]
+    public float minimumRangeFraction = 0.35f;
 
 
+    // =========================================================
+    // UPDATES
+    // =========================================================
 
-    void Start()
+    [Header("UPDATES")]
+
+    [Tooltip("Automatically finds every object with CelestialMass.")]
+    public bool automaticallyFindBodies = true;
+
+    [Tooltip("How often Unity searches for CelestialMass objects.")]
+    public float bodySearchInterval = 1f;
+
+
+    // =========================================================
+    // INTERNAL DATA
+    // =========================================================
+
+    private readonly List<LatticeLine> latticeLines =
+        new List<LatticeLine>();
+
+    private readonly List<CelestialMass> gravityBodies =
+        new List<CelestialMass>();
+
+    private readonly List<BodyWarpData> bodyWarpData =
+        new List<BodyWarpData>();
+
+    private Transform generatedParent;
+
+    private float bodySearchTimer = 0f;
+
+
+    // Used to detect Inspector changes during Play Mode
+
+    private int previousHorizontalCells;
+    private int previousVerticalCells;
+    private float previousCellSize;
+    private float previousLineWidth;
+
+
+    // =========================================================
+    // LATTICE LINE CLASS
+    // =========================================================
+
+    private class LatticeLine
     {
+        public LineRenderer renderer;
 
-        gravityBodies = new List<CelestialMass>(
-            FindObjectsByType<CelestialMass>(FindObjectsSortMode.None)
+        public Vector3[] originalPoints;
+
+        public Vector3[] warpedPoints;
+    }
+
+
+    // =========================================================
+    // BODY WARP DATA
+    // =========================================================
+
+    private struct BodyWarpData
+    {
+        public Vector3 position;
+
+        public float massInfluence;
+
+        public float range;
+    }
+
+
+    // =========================================================
+    // START
+    // =========================================================
+
+    private void Start()
+    {
+        previousHorizontalCells =
+            horizontalCells;
+
+        previousVerticalCells =
+            verticalCells;
+
+        previousCellSize =
+            cellSize;
+
+        previousLineWidth =
+            lineWidth;
+
+
+        FindGravityBodies();
+
+        GenerateLattice();
+    }
+
+
+    // =========================================================
+    // UPDATE
+    // =========================================================
+
+    private void Update()
+    {
+        // -----------------------------------------------------
+        // REBUILD GRID IF SIZE SETTINGS CHANGE
+        // -----------------------------------------------------
+
+        if (
+            horizontalCells != previousHorizontalCells ||
+            verticalCells != previousVerticalCells ||
+            !Mathf.Approximately(cellSize, previousCellSize)
+        )
+        {
+            previousHorizontalCells =
+                horizontalCells;
+
+            previousVerticalCells =
+                verticalCells;
+
+            previousCellSize =
+                cellSize;
+
+
+            GenerateLattice();
+        }
+
+
+        // -----------------------------------------------------
+        // UPDATE LINE WIDTH LIVE
+        // -----------------------------------------------------
+
+        if (!Mathf.Approximately(lineWidth, previousLineWidth))
+        {
+            previousLineWidth =
+                lineWidth;
+
+            UpdateLineWidths();
+        }
+
+
+        // -----------------------------------------------------
+        // SEARCH FOR PLANETS
+        // -----------------------------------------------------
+
+        if (automaticallyFindBodies)
+        {
+            bodySearchTimer +=
+                Time.deltaTime;
+
+
+            if (bodySearchTimer >= bodySearchInterval)
+            {
+                bodySearchTimer = 0f;
+
+                FindGravityBodies();
+            }
+        }
+
+
+        // -----------------------------------------------------
+        // CURVE GRID
+        // -----------------------------------------------------
+
+        BuildBodyWarpData();
+
+        UpdateLatticeCurvature();
+    }
+
+
+    // =========================================================
+    // FIND ALL CELESTIAL MASS OBJECTS
+    // =========================================================
+
+    private void FindGravityBodies()
+    {
+        gravityBodies.Clear();
+
+
+        CelestialMass[] foundBodies =
+            Object.FindObjectsByType<CelestialMass>(
+                FindObjectsInactive.Exclude,
+                FindObjectsSortMode.None
+            );
+
+
+        for (int i = 0; i < foundBodies.Length; i++)
+        {
+            if (foundBodies[i] != null)
+            {
+                gravityBodies.Add(
+                    foundBodies[i]
+                );
+            }
+        }
+    }
+
+
+    // =========================================================
+    // GENERATE 3D LATTICE
+    // =========================================================
+
+    private void GenerateLattice()
+    {
+        ClearOldLattice();
+
+
+        GameObject parentObject =
+            new GameObject(
+                "Generated 3D Lattice"
+            );
+
+
+        parentObject.transform.SetParent(
+            transform,
+            false
         );
 
 
-        if (autoFitToBodies && gravityBodies.Count > 0)
+        generatedParent =
+            parentObject.transform;
+
+
+        // =====================================================
+        // GRID DIMENSIONS
+        // =====================================================
+
+        float horizontalSize =
+            horizontalCells *
+            cellSize;
+
+
+        float verticalSize =
+            verticalCells *
+            cellSize;
+
+
+        float halfHorizontal =
+            horizontalSize *
+            0.5f;
+
+
+        float halfVertical =
+            verticalSize *
+            0.5f;
+
+
+        // =====================================================
+        // X-DIRECTION LINES
+        //
+        // These run LEFT ↔ RIGHT
+        // =====================================================
+
+        for (
+            int y = 0;
+            y <= verticalCells;
+            y++
+        )
         {
-            FitGridToBodies();
+            for (
+                int z = 0;
+                z <= horizontalCells;
+                z++
+            )
+            {
+                Vector3[] points =
+                    new Vector3[
+                        horizontalCells + 1
+                    ];
+
+
+                float yPosition =
+                    -halfVertical +
+                    y * cellSize;
+
+
+                float zPosition =
+                    -halfHorizontal +
+                    z * cellSize;
+
+
+                for (
+                    int x = 0;
+                    x <= horizontalCells;
+                    x++
+                )
+                {
+                    float xPosition =
+                        -halfHorizontal +
+                        x * cellSize;
+
+
+                    points[x] =
+                        new Vector3(
+                            xPosition,
+                            yPosition,
+                            zPosition
+                        );
+                }
+
+
+                CreateLine(
+                    points,
+                    "X Line"
+                );
+            }
+        }
+
+
+        // =====================================================
+        // Y-DIRECTION LINES
+        //
+        // These run UP ↕ DOWN
+        // =====================================================
+
+        for (
+            int x = 0;
+            x <= horizontalCells;
+            x++
+        )
+        {
+            for (
+                int z = 0;
+                z <= horizontalCells;
+                z++
+            )
+            {
+                Vector3[] points =
+                    new Vector3[
+                        verticalCells + 1
+                    ];
+
+
+                float xPosition =
+                    -halfHorizontal +
+                    x * cellSize;
+
+
+                float zPosition =
+                    -halfHorizontal +
+                    z * cellSize;
+
+
+                for (
+                    int y = 0;
+                    y <= verticalCells;
+                    y++
+                )
+                {
+                    float yPosition =
+                        -halfVertical +
+                        y * cellSize;
+
+
+                    points[y] =
+                        new Vector3(
+                            xPosition,
+                            yPosition,
+                            zPosition
+                        );
+                }
+
+
+                CreateLine(
+                    points,
+                    "Y Line"
+                );
+            }
+        }
+
+
+        // =====================================================
+        // Z-DIRECTION LINES
+        //
+        // These run FORWARD ↔ BACKWARD
+        // =====================================================
+
+        for (
+            int x = 0;
+            x <= horizontalCells;
+            x++
+        )
+        {
+            for (
+                int y = 0;
+                y <= verticalCells;
+                y++
+            )
+            {
+                Vector3[] points =
+                    new Vector3[
+                        horizontalCells + 1
+                    ];
+
+
+                float xPosition =
+                    -halfHorizontal +
+                    x * cellSize;
+
+
+                float yPosition =
+                    -halfVertical +
+                    y * cellSize;
+
+
+                for (
+                    int z = 0;
+                    z <= horizontalCells;
+                    z++
+                )
+                {
+                    float zPosition =
+                        -halfHorizontal +
+                        z * cellSize;
+
+
+                    points[z] =
+                        new Vector3(
+                            xPosition,
+                            yPosition,
+                            zPosition
+                        );
+                }
+
+
+                CreateLine(
+                    points,
+                    "Z Line"
+                );
+            }
+        }
+    }
+
+
+    // =========================================================
+    // CREATE ONE GRID LINE
+    // =========================================================
+
+    private void CreateLine(
+        Vector3[] points,
+        string lineName
+    )
+    {
+        GameObject lineObject =
+            new GameObject(
+                lineName
+            );
+
+
+        lineObject.transform.SetParent(
+            generatedParent,
+            false
+        );
+
+
+        LineRenderer line =
+            lineObject.AddComponent<LineRenderer>();
+
+
+        line.useWorldSpace =
+            false;
+
+
+        line.positionCount =
+            points.Length;
+
+
+        line.startWidth =
+            lineWidth;
+
+        line.endWidth =
+            lineWidth;
+
+
+        line.startColor =
+            lineColor;
+
+        line.endColor =
+            lineColor;
+
+
+        line.numCapVertices =
+            0;
+
+        line.numCornerVertices =
+            0;
+
+
+        // -----------------------------------------------------
+        // MATERIAL
+        // -----------------------------------------------------
+
+        if (lineMaterial != null)
+        {
+            line.sharedMaterial =
+                lineMaterial;
         }
         else
         {
-            halfExtentXZ = (gridSize / 2f) * spacing;
-            halfExtentY = (layers / 2f) * layerHeight;
+            Shader shader =
+                Shader.Find(
+                    "Universal Render Pipeline/Unlit"
+                );
+
+
+            if (shader == null)
+            {
+                shader =
+                    Shader.Find(
+                        "Sprites/Default"
+                    );
+            }
+
+
+            if (shader != null)
+            {
+                Material generatedMaterial =
+                    new Material(
+                        shader
+                    );
+
+
+                line.material =
+                    generatedMaterial;
+            }
         }
 
 
-        if (colorByCurvature)
+        // -----------------------------------------------------
+        // COPY ORIGINAL POINTS
+        // -----------------------------------------------------
+
+        Vector3[] originalCopy =
+            new Vector3[
+                points.Length
+            ];
+
+
+        Vector3[] warpedCopy =
+            new Vector3[
+                points.Length
+            ];
+
+
+        for (
+            int i = 0;
+            i < points.Length;
+            i++
+        )
         {
-            MeasureMaxCurvaturePerBody();
+            originalCopy[i] =
+                points[i];
+
+            warpedCopy[i] =
+                points[i];
         }
 
 
-        GenerateLattice();
+        line.SetPositions(
+            points
+        );
 
-        if (runMassTestOnStart)
-            TestMassAffectsBend();
 
+        LatticeLine latticeLine =
+            new LatticeLine();
+
+
+        latticeLine.renderer =
+            line;
+
+
+        latticeLine.originalPoints =
+            originalCopy;
+
+
+        latticeLine.warpedPoints =
+            warpedCopy;
+
+
+        latticeLines.Add(
+            latticeLine
+        );
     }
 
 
+    // =========================================================
+    // UPDATE LINE WIDTHS
+    // =========================================================
 
-    [Header("Debug")]
-    [Tooltip("Confirmed working — leave this off unless you're actively debugging, otherwise it logs every time you press Play.")]
-    public bool runMassTestOnStart = false;
-
-    [Tooltip("The fixed distance (world units) used by the mass test below. Same distance for every body so the comparison is apples-to-apples.")]
-    public float testDistance = 5f;
-
-    // Confirms mass is actually driving the bend. Every body is measured at
-    // the SAME fixed distance, so any difference in the logged curvature/
-    // displacement values comes purely from mass - if a heavier body doesn't
-    // show a bigger number here, mass isn't the thing affecting the bend.
-    // Right-click the component header (or the ⋮ menu) in the Inspector and
-    // choose "Test Mass Affects Bend" to re-run this anytime, in or out of
-    // Play mode.
-    [ContextMenu("Test Mass Affects Bend")]
-    public void TestMassAffectsBend()
+    private void UpdateLineWidths()
     {
-
-        List<CelestialMass> bodies = gravityBodies;
-
-        if (bodies == null || bodies.Count == 0)
+        for (
+            int i = 0;
+            i < latticeLines.Count;
+            i++
+        )
         {
-            bodies = new List<CelestialMass>(
-                FindObjectsByType<CelestialMass>(FindObjectsSortMode.None)
+            if (
+                latticeLines[i].renderer ==
+                null
+            )
+            {
+                continue;
+            }
+
+
+            latticeLines[i].renderer.startWidth =
+                lineWidth;
+
+
+            latticeLines[i].renderer.endWidth =
+                lineWidth;
+        }
+    }
+
+
+    // =========================================================
+    // BUILD GRAVITY DATA
+    // =========================================================
+
+    private void BuildBodyWarpData()
+    {
+        bodyWarpData.Clear();
+
+
+        if (gravityBodies.Count == 0)
+        {
+            return;
+        }
+
+
+        // -----------------------------------------------------
+        // FIND LARGEST MASS
+        //
+        // Normally this is the Sun.
+        // -----------------------------------------------------
+
+        double largestMass =
+            0.0;
+
+
+        for (
+            int i = 0;
+            i < gravityBodies.Count;
+            i++
+        )
+        {
+            CelestialMass body =
+                gravityBodies[i];
+
+
+            if (body == null)
+            {
+                continue;
+            }
+
+
+            if (body.mass > largestMass)
+            {
+                largestMass =
+                    body.mass;
+            }
+        }
+
+
+        if (largestMass <= 0.0)
+        {
+            return;
+        }
+
+
+        // -----------------------------------------------------
+        // CREATE WARP DATA FOR EVERY BODY
+        // -----------------------------------------------------
+
+        for (
+            int i = 0;
+            i < gravityBodies.Count;
+            i++
+        )
+        {
+            CelestialMass body =
+                gravityBodies[i];
+
+
+            if (body == null)
+            {
+                continue;
+            }
+
+
+            if (body.mass <= 0.0)
+            {
+                continue;
+            }
+
+
+            // Convert planet world position
+            // into lattice local position.
+
+            Vector3 localPosition =
+                transform.InverseTransformPoint(
+                    body.transform.position
+                );
+
+
+            // -------------------------------------------------
+            // RELATIVE MASS
+            // -------------------------------------------------
+
+            double massRatioDouble =
+                body.mass /
+                largestMass;
+
+
+            float massRatio =
+                Mathf.Clamp01(
+                    (float)massRatioDouble
+                );
+
+
+            // -------------------------------------------------
+            // VISUAL MASS COMPRESSION
+            //
+            // Real planet masses are tiny compared to the Sun.
+            // This keeps the mass order while making planetary
+            // curvature visible.
+            // -------------------------------------------------
+
+            float visualMass =
+                Mathf.Pow(
+                    Mathf.Max(
+                        massRatio,
+                        0.0000001f
+                    ),
+                    massVisualExponent
+                );
+
+
+            // -------------------------------------------------
+            // BODY GRAVITY RANGE
+            // -------------------------------------------------
+
+            float rangeMultiplier =
+                Mathf.Lerp(
+                    minimumRangeFraction,
+                    1f,
+                    visualMass
+                );
+
+
+            float bodyRange =
+                gravityRange *
+                rangeMultiplier;
+
+
+            // -------------------------------------------------
+            // STORE DATA
+            // -------------------------------------------------
+
+            BodyWarpData data =
+                new BodyWarpData();
+
+
+            data.position =
+                localPosition;
+
+
+            data.massInfluence =
+                visualMass;
+
+
+            data.range =
+                bodyRange;
+
+
+            bodyWarpData.Add(
+                data
             );
         }
-
-        if (bodies.Count == 0)
-        {
-            Debug.LogWarning("SpacetimeLattice: no CelestialMass bodies found in the scene.");
-            return;
-        }
-
-        List<CelestialMass> sorted = new List<CelestialMass>(bodies);
-        sorted.Sort((a, b) => b.mass.CompareTo(a.mass));
-
-        Debug.Log($"--- Mass vs Bend test (all measured at distance = {testDistance}) ---");
-
-        foreach (CelestialMass body in sorted)
-        {
-
-            float curvature = gravitationalConstant * body.mass / (testDistance * testDistance);
-            float displacementMagnitude = curvature * curvatureMultiplier;
-
-            Debug.Log($"{body.name}: mass={body.mass:E3}  ->  displacement={displacementMagnitude:E4}");
-
-        }
-
-        Debug.Log("If mass is correctly affecting the bend, bodies should be in the SAME order here as they are by mass above - heavier body, bigger displacement, every time.");
-
     }
 
 
+    // =========================================================
+    // UPDATE LATTICE CURVATURE
+    // =========================================================
 
-    // One pass over every grid vertex, tracking each body's own strongest
-    // curvature value separately (indexed to match gravityBodies). This is
-    // what lets a small moon and the Sun each get a visible color hotspot
-    // at their own closest approach, instead of everything being judged
-    // against whichever body happens to be most massive.
-    void MeasureMaxCurvaturePerBody()
+    private void UpdateLatticeCurvature()
     {
-
-        int half = gridSize / 2;
-        int yHalf = layers / 2;
-        perBodyMaxCurvature = new float[gravityBodies.Count];
-
-        for (int x = -half; x <= half; x++)
+        for (
+            int lineIndex = 0;
+            lineIndex < latticeLines.Count;
+            lineIndex++
+        )
         {
-            for (int y = 0; y <= layers; y++)
-            {
-                for (int z = -half; z <= half; z++)
-                {
+            LatticeLine latticeLine =
+                latticeLines[lineIndex];
 
-                    Vector3 point = new Vector3(
-                        MapCoordinate(x, half, halfExtentXZ),
-                        MapCoordinate(y - yHalf, yHalf, halfExtentY),
-                        MapCoordinate(z, half, halfExtentXZ)
+
+            if (
+                latticeLine.renderer ==
+                null
+            )
+            {
+                continue;
+            }
+
+
+            for (
+                int pointIndex = 0;
+                pointIndex <
+                latticeLine.originalPoints.Length;
+                pointIndex++
+            )
+            {
+                Vector3 originalPoint =
+                    latticeLine.originalPoints[
+                        pointIndex
+                    ];
+
+
+                Vector3 warpedPoint =
+                    WarpPoint(
+                        originalPoint
                     );
 
-                    for (int b = 0; b < gravityBodies.Count; b++)
-                    {
 
-                        CelestialMass body = gravityBodies[b];
-                        Vector3 direction = body.transform.position - point;
-                        float distance = direction.magnitude;
-
-                        if (distance < minDistance)
-                            distance = minDistance;
-
-                        float curvature = gravitationalConstant * body.mass / (distance * distance);
-
-                        if (curvature > perBodyMaxCurvature[b])
-                            perBodyMaxCurvature[b] = curvature;
-
-                    }
-
-                }
+                latticeLine.warpedPoints[
+                    pointIndex
+                ] =
+                    warpedPoint;
             }
+
+
+            latticeLine.renderer.SetPositions(
+                latticeLine.warpedPoints
+            );
         }
-
     }
 
 
+    // =========================================================
+    // WARP ONE GRID POINT
+    // =========================================================
 
-    Color GetCurvatureColor(float normalizedIntensity)
+    private Vector3 WarpPoint(
+        Vector3 originalPoint
+    )
     {
-
-        // Power curve pulls most of the line toward flatColor and only lets
-        // points very close to a mass reach warpedColor - matches the tight
-        // glowing pocket in the reference image rather than a smooth bleed.
-        float t = Mathf.Pow(Mathf.Clamp01(normalizedIntensity), colorFalloffPower);
-
-        return Color.Lerp(flatColor, warpedColor, t);
-
-    }
+        Vector3 finalPoint =
+            originalPoint;
 
 
-
-    // Builds an 8-key gradient (Unity's Gradient hard limit) by sampling
-    // curvature intensity at evenly spaced points along the line.
-    void ApplyCurvatureGradient(LineRenderer line, float[] intensities)
-    {
-
-        int sampleCount = Mathf.Min(8, intensities.Length);
-        GradientColorKey[] colorKeys = new GradientColorKey[sampleCount];
-        GradientAlphaKey[] alphaKeys = new GradientAlphaKey[sampleCount];
-
-        for (int i = 0; i < sampleCount; i++)
+        for (
+            int i = 0;
+            i < bodyWarpData.Count;
+            i++
+        )
         {
-
-            float t = (sampleCount == 1) ? 0f : (float)i / (sampleCount - 1);
-            int index = Mathf.RoundToInt(t * (intensities.Length - 1));
-
-            colorKeys[i] = new GradientColorKey(GetCurvatureColor(intensities[index]), t);
-            alphaKeys[i] = new GradientAlphaKey(1f, t);
-
-        }
-
-        Gradient gradient = new Gradient();
-        gradient.SetKeys(colorKeys, alphaKeys);
-        line.colorGradient = gradient;
-
-    }
+            BodyWarpData body =
+                bodyWarpData[i];
 
 
-
-    // Sets the cube's total half-extent so it reaches past the farthest
-    // planet. Grid line COUNT (gridSize/layers) stays exactly as set in the
-    // Inspector — only how far out the cube reaches changes.
-    void FitGridToBodies()
-    {
-
-        float maxDist = 0f;
-
-        foreach (CelestialMass body in gravityBodies)
-        {
-
-            Vector3 pos = body.transform.position;
-
-            maxDist = Mathf.Max(maxDist,
-                Mathf.Abs(pos.x),
-                Mathf.Abs(pos.y),
-                Mathf.Abs(pos.z));
-
-        }
-
-        if (maxDist <= 0f)
-            return;
-
-        halfExtentXZ = maxDist * fitPadding;
-        halfExtentY = maxDist * fitPadding;
-
-    }
+            Vector3 directionToBody =
+                body.position -
+                originalPoint;
 
 
-
-    // Maps an integer grid index to a world-space coordinate. With
-    // gridCurveExponent == 1 this is a plain linear grid (old behavior).
-    // With gridCurveExponent > 1, indices near the center map close
-    // together and indices near the edge spread far apart — so a cube
-    // that reaches all the way to Pluto still has fine resolution right
-    // around the Sun, Mercury, Venus, Earth, etc.
-    float MapCoordinate(int index, int halfRange, float halfExtent)
-    {
-
-        if (halfRange == 0)
-            return 0f;
-
-        float t = (float)index / halfRange; // -1..1
-
-        float magnitude = Mathf.Pow(Mathf.Abs(t), gridCurveExponent) * halfExtent;
-
-        return Mathf.Sign(t) * magnitude;
-
-    }
+            float distance =
+                directionToBody.magnitude;
 
 
+            // -------------------------------------------------
+            // OUTSIDE BODY'S CURVATURE RANGE
+            // -------------------------------------------------
 
-    void GenerateLattice()
-    {
-
-        int half = gridSize / 2;
-        int yHalf = layers / 2;
-
-
-        // --- Lines running along Y (vertical pillars) for every (x, z) ---
-        for (int x = -half; x <= half; x++)
-        {
-
-            for (int z = -half; z <= half; z++)
+            if (distance > body.range)
             {
-
-                LineRenderer line = CreateLine();
-                Vector3[] points = new Vector3[layers + 1];
-                float[] intensities = new float[layers + 1];
-
-                for (int y = 0; y <= layers; y++)
-                {
-
-                    Vector3 point = new Vector3(
-                        MapCoordinate(x, half, halfExtentXZ),
-                        MapCoordinate(y - yHalf, yHalf, halfExtentY),
-                        MapCoordinate(z, half, halfExtentXZ)
-                    );
-
-                    Vector3 displacement = BendSpace(point, out float intensity);
-                    point += displacement;
-                    points[y] = point;
-                    intensities[y] = intensity;
-
-                }
-
-                line.positionCount = points.Length;
-                line.SetPositions(points);
-
-                if (colorByCurvature)
-                    ApplyCurvatureGradient(line, intensities);
-
+                continue;
             }
 
-        }
 
-
-        // --- Lines running along Z for every (y, x) ---
-        for (int y = 0; y <= layers; y++)
-        {
-
-            for (int x = -half; x <= half; x++)
+            if (distance < 0.0001f)
             {
-
-                LineRenderer line = CreateLine();
-                Vector3[] points = new Vector3[gridSize + 1];
-                float[] intensities = new float[gridSize + 1];
-
-                for (int z = -half; z <= half; z++)
-                {
-
-                    Vector3 point = new Vector3(
-                        MapCoordinate(x, half, halfExtentXZ),
-                        MapCoordinate(y - yHalf, yHalf, halfExtentY),
-                        MapCoordinate(z, half, halfExtentXZ)
-                    );
-
-                    Vector3 displacement = BendSpace(point, out float intensity);
-                    point += displacement;
-                    points[z + half] = point;
-                    intensities[z + half] = intensity;
-
-                }
-
-                line.positionCount = points.Length;
-                line.SetPositions(points);
-
-                if (colorByCurvature)
-                    ApplyCurvatureGradient(line, intensities);
-
+                continue;
             }
 
+
+            // -------------------------------------------------
+            // SMOOTH EDGE FALLOFF
+            // -------------------------------------------------
+
+            float normalizedDistance =
+                distance /
+                body.range;
+
+
+            float edgeFalloff =
+                1f -
+                normalizedDistance;
+
+
+            edgeFalloff =
+                edgeFalloff *
+                edgeFalloff;
+
+
+            // -------------------------------------------------
+            // NEWTON-LIKE INVERSE-SQUARE SHAPE
+            //
+            // Similar to:
+            //
+            // F = G M m / r²
+            //
+            // Softening avoids an infinite spike.
+            // -------------------------------------------------
+
+            float softenedDistanceSquared =
+                distance * distance +
+                softeningDistance *
+                softeningDistance;
+
+
+            float softeningSquared =
+                softeningDistance *
+                softeningDistance;
+
+
+            float inverseSquareShape =
+                softeningSquared /
+                softenedDistanceSquared;
+
+
+            // -------------------------------------------------
+            // FINAL DISPLACEMENT
+            // -------------------------------------------------
+
+            float displacement =
+                curvatureStrength *
+                body.massInfluence *
+                inverseSquareShape *
+                edgeFalloff;
+
+
+            Vector3 direction =
+                directionToBody.normalized;
+
+
+            finalPoint +=
+                direction *
+                displacement;
         }
 
 
-        // --- Lines running along X for every (y, z) ---
-        // This is the set that was missing — it's what turns the grid
-        // from a flat fan of lines into an actual cube-shaped lattice.
-        for (int y = 0; y <= layers; y++)
-        {
-
-            for (int z = -half; z <= half; z++)
-            {
-
-                LineRenderer line = CreateLine();
-                Vector3[] points = new Vector3[gridSize + 1];
-                float[] intensities = new float[gridSize + 1];
-
-                for (int x = -half; x <= half; x++)
-                {
-
-                    Vector3 point = new Vector3(
-                        MapCoordinate(x, half, halfExtentXZ),
-                        MapCoordinate(y - yHalf, yHalf, halfExtentY),
-                        MapCoordinate(z, half, halfExtentXZ)
-                    );
-
-                    Vector3 displacement = BendSpace(point, out float intensity);
-                    point += displacement;
-                    points[x + half] = point;
-                    intensities[x + half] = intensity;
-
-                }
-
-                line.positionCount = points.Length;
-                line.SetPositions(points);
-
-                if (colorByCurvature)
-                    ApplyCurvatureGradient(line, intensities);
-
-            }
-
-        }
-
+        return finalPoint;
     }
 
 
+    // =========================================================
+    // DELETE OLD LATTICE
+    // =========================================================
 
-    Vector3 BendSpace(Vector3 position, out float colorIntensity)
+    private void ClearOldLattice()
     {
-
-        Vector3 displacement = Vector3.zero;
-        float strongestNormalized = 0f;
+        latticeLines.Clear();
 
 
-        for (int b = 0; b < gravityBodies.Count; b++)
+        if (generatedParent != null)
         {
+            Destroy(
+                generatedParent.gameObject
+            );
 
-            CelestialMass body = gravityBodies[b];
 
-            Vector3 direction = body.transform.position - position;
-            float distance = direction.magnitude;
-
-            // Clamp instead of skipping — skipping produces a hard edge,
-            // clamping produces a smooth, bounded dip near each mass.
-            if (distance < minDistance)
-                distance = minDistance;
-
-            float curvature =
-                gravitationalConstant *
-                body.mass /
-                (distance * distance);
-
-            displacement +=
-                direction.normalized *
-                curvature *
-                curvatureMultiplier;
-
-            // How strong is this specifically compared to what THIS body
-            // ever achieves on the grid? Keeps small/close bodies visible
-            // even when a much bigger body is elsewhere in the scene.
-            if (perBodyMaxCurvature != null && perBodyMaxCurvature[b] > 0f)
-            {
-
-                float normalized = curvature / perBodyMaxCurvature[b];
-
-                if (normalized > strongestNormalized)
-                    strongestNormalized = normalized;
-
-            }
-
+            generatedParent =
+                null;
         }
 
-        colorIntensity = strongestNormalized;
-        return displacement;
 
+        Transform oldGrid =
+            transform.Find(
+                "Generated 3D Lattice"
+            );
+
+
+        if (oldGrid != null)
+        {
+            Destroy(
+                oldGrid.gameObject
+            );
+        }
     }
-
-
-
-    LineRenderer CreateLine()
-    {
-
-        GameObject obj = new GameObject("Spacetime Line");
-        obj.transform.parent = this.transform;
-
-        LineRenderer lr = obj.AddComponent<LineRenderer>();
-
-        lr.material = lineMaterial;
-        lr.startWidth = lineWidth;
-        lr.endWidth = lineWidth;
-        lr.useWorldSpace = true;
-
-        return lr;
-
-    }
-
 }
